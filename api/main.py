@@ -1,67 +1,70 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Dict, Any
-import uuid
+from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from security.military_grade import SecurityMiddleware, MilitaryGradeSecurity
 
-app = FastAPI(title="AI Business Platform", version="1.0.0")
+app = FastAPI(title="AI Business Platform Pro", version="2.0.0")
 
-class TaskRequest(BaseModel):
-    description: str
-    complexity: str
-    dependencies: List[str] = []
-    parameters: Dict[str, Any] = {}
+# Add security middleware
+app.add_middleware(HTTPSRedirectMiddleware)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["yourdomain.com"])
 
-class TaskResponse(BaseModel):
-    task_id: str
-    status: str
-    result: Dict[str, Any] = {}
+security = SecurityMiddleware()
+auth = MilitaryGradeSecurity()
 
-# Initialize orchestrator and agents
-orchestrator = TaskOrchestrator()
-strategic_agent = StrategicAgent("strategy_001")
-synthetic_agent = SyntheticAgent("synthetic_001")
-
-orchestrator.register_agent(strategic_agent)
-orchestrator.register_agent(synthetic_agent)
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(orchestrator.process_tasks())
-
-@app.post("/tasks", response_model=TaskResponse)
-async def create_task(task_request: TaskRequest):
-    task_id = str(uuid.uuid4())
-    task = Task(
-        id=task_id,
-        description=task_request.description,
-        complexity=task_request.complexity,
-        dependencies=task_request.dependencies,
-        parameters=task_request.parameters
+@app.post("/api/v1/create-course")
+async def create_course(
+    course_data: dict,
+    authorization: str = Header(...),
+    x_client_ip: str = Header(...)
+):
+    """Create new addictive course"""
+    # Verify authentication
+    try:
+        payload = auth.verify_token(authorization)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    # Check rate limit
+    if not await security.check_rate_limit(x_client_ip, "create_course"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
+    course_creator = CourseCreator()
+    course = await course_creator.create_addictive_course(
+        course_data['category'],
+        course_data['level']
     )
     
-    await orchestrator.submit_task(task)
+    return {"status": "success", "course": course}
+
+@app.get("/api/v1/owner/dashboard")
+async def get_owner_dashboard(authorization: str = Header(...)):
+    """Get secure owner dashboard"""
+    dashboard = OwnerDashboard()
+    data = await dashboard.get_dashboard_data(authorization)
     
-    return TaskResponse(
-        task_id=task_id,
-        status="submitted"
+    return {"status": "success", "dashboard": data}
+
+@app.post("/api/v1/process-payment")
+async def process_payment(payment_data: dict):
+    """Process customer payment"""
+    processor = PaymentProcessor()
+    result = await processor.process_payment(
+        payment_data['amount'],
+        payment_data['currency'],
+        payment_data['customer'],
+        payment_data['method'],
+        payment_data['country']
     )
-
-@app.get("/tasks/{task_id}")
-async def get_task_result(task_id: str):
-    if task_id not in orchestrator.results_store:
-        raise HTTPException(status_code=404, detail="Task not found")
     
-    return orchestrator.results_store[task_id]
+    # Track revenue
+    tracker = RevenueTracker()
+    await tracker.track_revenue({
+        'country': payment_data['country'],
+        'amount': payment_data['amount'],
+        'product': payment_data.get('product', 'premium_subscription')
+    })
+    
+    return {"status": "success", "payment": result}
 
-@app.get("/agents")
-async def get_agents():
-    return {
-        "agents": [
-            {
-                "agent_id": agent.agent_id,
-                "capabilities": agent.capabilities,
-                "available": agent.is_available
-            }
-            for agent in orchestrator.agents.values()
-        ]
-    }
+# Add more endpoints for content creation, social media posting, etc.
