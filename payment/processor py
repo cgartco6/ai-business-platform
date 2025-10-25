@@ -1,0 +1,116 @@
+import stripe
+from payfast import PayFast
+from typing import Dict, Any, Optional
+from datetime import datetime
+import hashlib
+import hmac
+
+class PaymentProcessor:
+    def __init__(self):
+        self.stripe_client = stripe
+        self.stripe_client.api_key = os.getenv('STRIPE_SECRET_KEY')
+        
+        self.payfast_client = PayFast(
+            merchant_id=os.getenv('PAYFAST_MERCHANT_ID'),
+            merchant_key=os.getenv('PAYFAST_MERCHANT_KEY'),
+            return_url=os.getenv('PAYFAST_RETURN_URL'),
+            cancel_url=os.getenv('PAYFAST_CANCEL_URL'),
+            notify_url=os.getenv('PAYFAST_NOTIFY_URL')
+        )
+        
+        self.currency_rates = {'ZAR': 1.0, 'USD': 0.054, 'EUR': 0.049}
+    
+    async def process_payment(self, amount: float, currency: str, customer_data: Dict, 
+                            payment_method: str, country: str) -> Dict[str, Any]:
+        """Process payment based on customer location"""
+        
+        # Convert to ZAR for South African payments
+        if country in ['ZA', 'NA', 'BW']:  # Southern Africa
+            amount_zar = amount * self.currency_rates.get(currency, 1.0)
+            return await self._process_payfast_payment(amount_zar, customer_data)
+        else:
+            # International payments
+            return await self._process_stripe_payment(amount, currency, customer_data)
+    
+    async def _process_payfast_payment(self, amount: float, customer_data: Dict) -> Dict[str, Any]:
+        """Process payment via PayFast for Southern Africa"""
+        payment_data = {
+            'amount': amount,
+            'item_name': 'AI Business Platform Subscription',
+            'item_description': 'Premium access to AI courses and tools',
+            'email_address': customer_data['email'],
+            'm_payment_id': f"sub_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            'custom_int1': customer_data.get('user_id'),
+            'subscription_type': 1
+        }
+        
+        try:
+            payment_url = self.payfast_client.payment_url(payment_data)
+            return {
+                'status': 'redirect',
+                'payment_url': payment_url,
+                'payment_id': payment_data['m_payment_id'],
+                'gateway': 'payfast'
+            }
+        except Exception as e:
+            raise Exception(f"PayFast payment failed: {str(e)}")
+    
+    async def _process_stripe_payment(self, amount: float, currency: str, customer_data: Dict) -> Dict[str, Any]:
+        """Process payment via Stripe for international"""
+        try:
+            # Create customer
+            customer = self.stripe_client.Customer.create(
+                email=customer_data['email'],
+                name=customer_data.get('name', ''),
+                metadata={'user_id': customer_data.get('user_id')}
+            )
+            
+            # Create payment intent
+            payment_intent = self.stripe_client.PaymentIntent.create(
+                amount=int(amount * 100),  # Convert to cents
+                currency=currency.lower(),
+                customer=customer.id,
+                description='AI Business Platform Subscription',
+                metadata={
+                    'user_id': customer_data.get('user_id'),
+                    'product': 'premium_subscription'
+                }
+            )
+            
+            return {
+                'status': 'success',
+                'payment_intent_id': payment_intent.id,
+                'client_secret': payment_intent.client_secret,
+                'customer_id': customer.id,
+                'gateway': 'stripe'
+            }
+            
+        except Exception as e:
+            raise Exception(f"Stripe payment failed: {str(e)}")
+
+class SubscriptionManager:
+    def __init__(self):
+        self.active_subscriptions = {}
+        self.pricing_tiers = {
+            'basic': {'price': 199, 'features': ['course_access', 'community']},
+            'premium': {'price': 499, 'features': ['all_courses', 'ai_tools', 'priority_support']},
+            'enterprise': {'price': 1299, 'features': ['custom_courses', 'api_access', 'dedicated_support']}
+        }
+    
+    async def create_subscription(self, user_id: str, tier: str, payment_method: str) -> Dict[str, Any]:
+        """Create new subscription"""
+        subscription_id = f"sub_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        subscription_data = {
+            'subscription_id': subscription_id,
+            'user_id': user_id,
+            'tier': tier,
+            'price': self.pricing_tiers[tier]['price'],
+            'start_date': datetime.now(),
+            'end_date': datetime.now() + timedelta(days=30),
+            'status': 'active',
+            'features': self.pricing_tiers[tier]['features']
+        }
+        
+        self.active_subscriptions[subscription_id] = subscription_data
+        return subscription_data
